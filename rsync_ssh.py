@@ -254,22 +254,20 @@ class RsyncSshSaveCommand(sublime_plugin.EventListener):
         view.run_command("rsync_ssh_sync", {"path_being_saved": view.file_name()})
 
 
-class RsyncSshSyncCommand(sublime_plugin.TextCommand):
+class RsyncSshSyncCommand(RsyncSshSyncBase):
     """Sublime Command for invoking the actual sync process"""
 
     def run(self, edit, **args): # pylint: disable=W0613
         """Start thread with rsync to keep ui responsive"""
 
-        # Get settings
-        settings = rsync_ssh_settings(self.view)
-        if not settings:
-            console_print("","","Aborting! - rsync ssh is not configured!")
+        super( RsyncSshSyncCommand, self ).run( edit, **args )
+        if self.settings is False:
             return
 
         # Start command thread to keep ui responsive
         thread = RsyncSSH(
             self.view,
-            settings,
+            self.settings,
             args.get("remote", None),
             args.get("destination", None),
             args.get("files", []),
