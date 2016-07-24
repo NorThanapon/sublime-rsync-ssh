@@ -119,6 +119,81 @@ class RsyncSshInitSettingsCommand(sublime_plugin.TextCommand):
         # Open configuration in new tab
         self.view.window().run_command("open_file", {"file": "${project}"})
 
+class RsyncSshSyncBase(sublime_plugin.TextCommand):
+    files                     = []
+    hosts                     = []
+    possibleRemotes           = []
+    selectedRemoteKey         = None
+    settings                  = False
+    # Stuff to overwrite:
+    identifier                = ''
+    ignoreObviousRemoteChoice = False
+
+    def run( self, edit, **args ): # pylint: disable=W0613
+        self.files            = []
+        self.hosts            = []
+        self.possibleRemotes  = []
+
+        projectData           = sublime.active_window().project_data()
+        if projectData == None:
+            self.settings     = False
+            return
+
+        self.settings         = projectData.get( 'settings', {} ).get( 'rsync_ssh', False )
+    
+    def sync_remote( self, choice ):
+        """Call rsync_ssh_command with the selected remote"""
+
+        if choice >= 0:
+            self.view.settings().set( 'rsync_ssh_sync_' + self.identifier + '_remote', choice )
+
+            self.selectedRemoteKey = self.possibleRemotes[ choice ]
+            destinations = self.settings.get( 'remotes' ).get( self.selectedRemoteKey )
+
+            # Remote has no destinations, which makes no sense
+            if len( destinations ) == 0:
+                self.view.window().status_message( 'Rsync: no destinations known...' )
+                return
+            # If remote only has one destination, we'll just initiate the sync
+            elif len( destinations ) == 1 and not self.ignoreObviousRemoteChoice:
+                # Start command thread to keep ui responsive
+                self.view.run_command(
+                    'rsync_ssh_sync', {
+                        'force_sync': True,
+                        'remote': self.selectedRemoteKey
+                    }
+                )
+            else:
+                self.hosts = [ [ 'All', 'Sync to all destinations' ] ]
+                for destination in destinations:
+                    self.hosts.append( [
+                        destination.get( 'remote_user' ) + '@' + destination.get( 'remote_host' ) + ':' + str( destination.get( 'remote_port' ) ),
+                        destination.get( 'remote_path' )
+                    ] )
+
+                selected_destination = self.view.settings().get( 'rsync_ssh_sync_' + self.identifier + '_destination', 0 )
+                selected_destination = max( selected_destination, 0 )
+                selected_destination = min( selected_destination, len( destinations ) )
+                self.view.window().show_quick_panel( self.hosts, self.sync_destination, sublime.MONOSPACE_FONT, selected_destination )
+
+    def sync_destination( self, choice ):
+        """Sync single destination"""
+
+        # 0 == All destinations > 0 == specific destination
+        if choice >= 0:
+            self.view.settings().set( 'rsync_ssh_sync_' + self.identifier + '_destination', choice )
+
+            # Start command thread to keep ui responsive
+            self.view.run_command(
+                'rsync_ssh_sync', {
+                    # When selecting a specific destination we'll force the sync
+                    'force_sync': False if choice == 0 else True,
+                    'remote': self.selectedRemoteKey,
+                    'destination': choice,
+                    'files': self.files
+                }
+            )
+
 
 class RsyncSshSyncSpecificRemoteCommand(sublime_plugin.TextCommand):
     """Start rsync for a specific remote"""
