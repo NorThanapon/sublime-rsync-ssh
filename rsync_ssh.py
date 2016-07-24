@@ -195,84 +195,27 @@ class RsyncSshSyncBase(sublime_plugin.TextCommand):
             )
 
 
-class RsyncSshSyncSpecificRemoteCommand(sublime_plugin.TextCommand):
+class RsyncSshSyncSpecificRemoteCommand(RsyncSshSyncBase):
     """Start rsync for a specific remote"""
-
-    remotes = []
-    hosts   = []
 
     def run(self, edit, **args): # pylint: disable=W0613
         """Let user select which remote/destination to sync using the quick panel"""
 
-        settings = rsync_ssh_settings(self.view)
-        if not settings:
-            console_print("","","Aborting! - rsync ssh is not configured!")
+        self.identifier = 'specific_remote'
+        self.ignoreObviousRemoteChoice = False
+
+        super( RsyncSshSyncSpecificRemoteCommand, self ).run( edit, **args )
+        if self.settings is False:
             return
 
-        self.remotes = []
-        for remote_key in settings.get("remotes").keys():
-            for destination in settings.get("remotes").get(remote_key):
-                # print(remote)
+        for remote_key in self.settings.get("remotes").keys():
+            for destination in self.settings.get("remotes").get(remote_key):
                 if destination.get("enabled", True) == True:
-                    if remote_key not in self.remotes:
-                        self.remotes.append(remote_key)
+                    if remote_key not in self.possibleRemotes:
+                        self.possibleRemotes.append(remote_key)
 
-        selected_remote = self.view.settings().get("rsync_ssh_sync_specific_remote", 0)
-        self.view.window().show_quick_panel(self.remotes, self.sync_remote, sublime.MONOSPACE_FONT, selected_remote)
-
-    def sync_remote(self, choice):
-        """Call rsync_ssh_command with the selected remote"""
-
-        if choice >= 0:
-            self.view.settings().set("rsync_ssh_sync_specific_remote", choice)
-
-            destinations = rsync_ssh_settings(self.view).get("remotes").get(self.remotes[choice])
-
-            # Remote has no destinations, which makes no sense
-            if len(destinations) == 0:
-                return
-            # If remote only has one destination, we'll just initiate the sync
-            elif len(destinations) == 1:
-                # Start command thread to keep ui responsive
-                self.view.run_command(
-                    "rsync_ssh_sync", {
-                        "remote": self.remotes[choice].
-                        "force_sync": True
-                    }
-                )
-            else:
-                self.hosts = [['All', 'Sync to all destinations']]
-                for destination in destinations:
-                    self.hosts.append([
-                        destination.get("remote_user")+"@"+destination.get("remote_host")+":"+str(destination.get("remote_port")),
-                        destination.get("remote_path")
-                    ])
-
-                selected_destination = self.view.settings().get("rsync_ssh_sync_specific_destination", 0)
-                self.view.window().show_quick_panel(self.hosts, self.sync_destination, sublime.MONOSPACE_FONT, selected_destination)
-
-    def sync_destination(self, choice):
-        """Sync single destination"""
-
-        selected_remote = self.view.settings().get("rsync_ssh_sync_specific_remote", 0)
-
-        # 0 == All destinations > 0 == specific destination
-        if choice > -1:
-            self.view.settings().set("rsync_ssh_sync_specific_destination", choice)
-
-            # Build restriction string
-            restrict_to_destinations = None if choice == 0 else self.hosts[choice][0]+":"+self.hosts[choice][1]
-
-            # Start command thread to keep ui responsive
-            self.view.run_command(
-                "rsync_ssh_sync", {
-                    "remote": self.remotes[selected_remote],
-                    "destination": choice
-                    # When selecting a specific destination we'll force the sync
-                    "force_sync": False if choice == 0 else True
-                }
-            )
-
+        selected_remote = self.view.settings().get("rsync_ssh_sync_" + self.identifier + "_remote", 0)
+        self.view.window().show_quick_panel(self.possibleRemotes, self.sync_remote, sublime.MONOSPACE_FONT, selected_remote)
 
 class RsyncSshSaveCommand(sublime_plugin.EventListener):
     """Sublime Command for syncing a single file when user saves"""
