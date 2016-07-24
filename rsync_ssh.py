@@ -165,8 +165,7 @@ class RsyncSshSyncSpecificRemoteCommand(sublime_plugin.TextCommand):
                 # Start command thread to keep ui responsive
                 self.view.run_command(
                     "rsync_ssh_sync", {
-                        "path_being_saved": self.remotes[choice],
-                        "restrict_to_destinations": None,
+                        "remote": self.remotes[choice].
                         "force_sync": True
                     }
                 )
@@ -196,8 +195,8 @@ class RsyncSshSyncSpecificRemoteCommand(sublime_plugin.TextCommand):
             # Start command thread to keep ui responsive
             self.view.run_command(
                 "rsync_ssh_sync", {
-                    "path_being_saved": self.remotes[selected_remote],
-                    "restrict_to_destinations": restrict_to_destinations,
+                    "remote": self.remotes[selected_remote],
+                    "destination": choice
                     # When selecting a specific destination we'll force the sync
                     "force_sync": False if choice == 0 else True
                 }
@@ -219,6 +218,10 @@ class RsyncSshSaveCommand(sublime_plugin.EventListener):
         # Don't sync single file if user has disabled sync on save
         elif settings.get("sync_on_save", True) == False:
             return
+
+        # TODO: review if it gets rewritten and reactivated
+        print( '"Sync on save" is not supported by this version!' )
+        return
 
         # Don't sync git commit message buffer
         if os.path.basename(view.file_name()) == "COMMIT_EDITMSG":
@@ -253,8 +256,9 @@ class RsyncSshSyncCommand(sublime_plugin.TextCommand):
         thread = RsyncSSH(
             self.view,
             settings,
-            args.get("path_being_saved", ""),
-            args.get("restrict_to_destinations", None),
+            args.get("remote", None),
+            args.get("destination", None),
+            args.get("files", [])
             args.get("force_sync", False)
         )
         thread.start()
@@ -263,17 +267,80 @@ class RsyncSshSyncCommand(sublime_plugin.TextCommand):
 class RsyncSSH(threading.Thread):
     """Rsync path to remote"""
 
-    def __init__(self, view, settings, path_being_saved="", restrict_to_destinations=None, force_sync=False):
+    view                     = None
+    settings                 = None
+    folder                   = None
+    destination              = None
+    files                    = []
+    force_sync               = False
+    threads                  = []
+    realRemotePaths          = {}
+
+    def __init__( self, view, settings, folder = None, destination = None, files = [], force_sync = False ):
         """Set the stage"""
-        self.view                     = view
-        self.settings                 = settings
-        self.path_being_saved         = normalize_path(path_being_saved)
-        self.restrict_to_destinations = restrict_to_destinations
-        self.force_sync               = force_sync
+        self.view            = view
+        self.settings        = settings
+        self.folder          = folder
+        self.destination     = destination
+        self.files           = files
+        self.force_sync      = force_sync
+        self.threads         = []
+        
+        # Get the project paths
+        self.realRemotePaths = {}
+        windowFoldersArr = [ os.path.realpath( windowFolder ).strip( os.sep ).split( os.sep ) for windowFolder in self.view.window().folders() ]
+        for remote in self.settings.get( "remotes" ).keys():
+            remoteArr = re.split( os.sep + '|/', remote.strip( os.sep ) )
+            for windowFolderArr in windowFoldersArr:
+                if len( windowFolderArr ) > 0 and len( remoteArr ) > 0 and windowFolderArr[ -1 ] == remoteArr[ 0 ]:
+                    self.realRemotePaths[ remote ] = os.sep.join( [''] + windowFolderArr + remoteArr[1:] )
+
+
         threading.Thread.__init__(self)
 
     def run(self):
         """Iterate over remotes and destinations and sync all paths that match the saved path"""
+
+        # Map destination index to the real data object
+        # Irregularities -> None -> Loop over all
+        if self.destination is not None:
+            if self.folder is None:
+                self.destination = None
+            else:
+                destinations = self.settings.get( "remotes" ).get( self.folder )
+                # lower than w/o equal as first destination is 'All'
+                if len( destinations ) < self.destination or self.destination <= 0:
+                    self.destination = None
+                else:
+                    self.destination = destinations[ self.destination - 1 ]
+
+        if self.folder is None:
+            for folder in self.settings.get( "remotes" ).keys():
+                self.runFolder( folder )
+        else:
+            self.runFolder()
+
+        # Wait for all threads to finish
+        if len( self.threads ) > 0:
+            for thread in self.threads:
+                thread.join()
+            status_bar_message = self.view.get_status( "00000_rsync_ssh_status" )
+            self.view.set_status( "00000_rsync_ssh_status", "" )
+            sublime.status_message( status_bar_message + " - done." )
+            console_print( "", "", "done" )
+        else:
+            status_bar_message = self.view.get_status( "00000_rsync_ssh_status" )
+            self.view.set_status( "00000_rsync_ssh_status", "" )
+            sublime.status_message( status_bar_message + " - done." )
+
+        # Unblock sync
+        self.view.set_status( "00000_rsync_ssh_status", "" )
+        return
+        # PRESERVE REST FOR GIT
+        # OTHERWISE IT WOULD TRY TO CHANGE EACH LINE INSTEAD OF TREATING IT FOR WHAT IT IS: A REWRITE
+
+
+
 
         # Merge settings with defaults
         global_excludes = [".DS_Store"]
@@ -422,6 +489,89 @@ class RsyncSSH(threading.Thread):
         # # Don't sync if saving single file outside of project path
         # if self.path_being_saved and not self.path_being_saved.startswith(folder_path_full+"/"):
         #     continue
+
+    def runFolder( self, folder = None ):
+        if folder is None:
+            folder = self.folder
+
+        if self.destination is None:
+            for destination in self.settings.get( "remotes" ).get( folder ):
+                self.runDestination( folder, destination )
+            pass
+        else:
+            self.runDestination( folder, self.destination )
+
+    def runDestination( self, folder, destination ):
+        # Merge settings with defaults
+        global_excludes = [".DS_Store"]
+        global_excludes.extend( self.settings.get( "excludes", [] ) )
+
+        global_options = []
+        global_options.extend( self.settings.get( "options", [] ) )
+
+        connect_timeout = self.settings.get( "timeout", 10 )
+
+        # Get path to local ssh binary
+        ssh_binary = self.settings.get( "ssh_binary", self.settings.get( "ssh_command", "ssh" ) )
+
+        destination_string = ":".join( [
+            destination.get( "remote_user" ) + "@" + destination.get( "remote_host" ),
+            str( destination.get( "remote_port", 22 ) ),
+            destination.get( "remote_path" )
+        ] )
+
+        # Merge local settings with global defaults
+        local_excludes = list( global_excludes )
+        local_excludes.extend( destination.get( "excludes", [] ) )
+
+        local_options = list( global_options )
+        local_options.extend( destination.get( "options", [] ) )
+
+        if folder not in self.realRemotePaths:
+            console_print( folder, 'is unknown' )
+            return
+        local_path = self.realRemotePaths[ folder ]
+
+        threads = []
+        if len( self.files ) > 0:
+            for file in self.files:
+                thread = Rsync(
+                    self.view,
+                    ssh_binary,
+                    local_path,
+                    folder, # old 'prefix' -- this is just for logging to console
+                    destination,
+                    local_excludes,
+                    local_options,
+                    connect_timeout,
+                    file,
+                    self.force_sync
+                )
+                threads.append( thread )
+                self.threads.append( thread )
+        else :
+            thread = Rsync(
+                self.view,
+                ssh_binary,
+                local_path,
+                folder, # old 'prefix' -- this is just for logging to console
+                destination,
+                local_excludes,
+                local_options,
+                connect_timeout,
+                None,
+                self.force_sync
+            )
+            threads.append( thread )
+            self.threads.append( thread )
+        
+
+        # Update status message
+        status_bar_message = "Rsyncing to " + str( len( self.threads ) ) + " destination(s)"
+        self.view.set_status( "00000_rsync_ssh_status", status_bar_message )
+
+        for thread in threads:
+            thread.start()
 
 class Rsync(threading.Thread):
     """rsync executor"""
