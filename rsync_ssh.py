@@ -143,7 +143,12 @@ class RsyncSshSyncBase(sublime_plugin.TextCommand):
             return
 
         self.settings         = projectData.get( 'settings', {} ).get( 'rsync_ssh', False )
-    
+        # Make sure that the remote keys make sense. Settings settings to False should otherwise trigger abort
+        if self.settings is not False and any( re.match( r'^\.[/\\' + os.sep + ']', remoteKey ) for remoteKey in self.settings.get( 'remotes' ).keys() ):
+            self.settings = False
+            print( 'Dot (.) folder configurations not allowed!' )
+            self.view.window().status_message( 'Rsync Error: Dot (.) folder configurations not allowed!' )
+        
     def sync_remote( self, choice ):
         """Call rsync_ssh_command with the selected remote"""
 
