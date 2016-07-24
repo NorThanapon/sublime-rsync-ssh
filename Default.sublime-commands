@@ -1,12 +1,24 @@
 [
     {
-        "caption": "rsync ssh: Syncronize project to remotes",
-        "command": "rsync_ssh_sync_project",
+        "caption": "RsyncSSH: Syncronize _project_ to specific remote",
+        "command": "rsync_ssh_sync_specific_remote",
         "args": {
         }
     },
     {
-        "caption": "rsync ssh: Initialize settings",
+        "caption": "RsyncSSH: Syncronize _file_ to specific remotes",
+        "command": "rsync_ssh_sync_file",
+        "args": {
+        }
+    },
+    {
+        "caption": "RsyncSSH: Syncronize project (all at once) to remotes",
+        "command": "rsync_ssh_sync",
+        "args": {
+        }
+    },
+    {
+        "caption": "RsyncSSH: Initialize settings",
         "command": "rsync_ssh_init_settings",
         "args": {
         }

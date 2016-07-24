@@ -194,6 +194,52 @@ class RsyncSshSyncBase(sublime_plugin.TextCommand):
                 }
             )
 
+class RsyncSshSyncSelection(RsyncSshSyncBase):
+
+    def run( self, edit, **args ): # pylint: disable=W0613
+        self.identifier = 'file'
+        self.ignoreObviousRemoteChoice = True
+
+        super( RsyncSshSyncSelection, self ).run( edit, **args )
+        if self.settings is False:
+            return
+
+        self.loadRemotePathMapping()
+
+        # This method should be overwritten in subclass doing the 
+        # matching and filling possible remotes to upload to
+        if not self.setup( **args ):
+            return
+
+        if len( self.possibleRemotes ) == 0:
+            console_print( '', '', 'No match found for this file/folder' )
+            self.view.window().status_message( '### Rsync: No match found for this file/folder!' )
+            return
+
+        self.view.window().show_quick_panel( self.possibleRemotes, self.sync_remote, sublime.MONOSPACE_FONT, 0 )
+
+    def setup( self, **args ):
+        return False
+
+    def loadRemotePathMapping( self ):
+        self.realRemotePaths = {}
+        windowFoldersArr = [ os.path.realpath( windowFolder ).strip( os.sep ).split( os.sep ) for windowFolder in self.view.window().folders() ]
+        for remote in self.settings.get( 'remotes' ).keys():
+            remoteArr = re.split( os.sep + '|/', remote.strip( os.sep ) )
+            for windowFolderArr in windowFoldersArr:
+                if len( windowFolderArr ) > 0 and len( remoteArr ) > 0 and windowFolderArr[ -1 ] == remoteArr[ 0 ]:
+                    self.realRemotePaths[ remote ] = os.sep.join( [ '' ] + windowFolderArr + remoteArr[ 1: ] )
+
+    def matchFile( self, file ):
+        return [ remote for remote in self.realRemotePaths if self.isInDirectory( self.realRemotePaths[ remote ], file ) ]
+    
+    def isInDirectory( self, folder, file ):
+        fileParts = os.path.realpath( file ).strip( os.sep ).split( os.sep )
+        fileParts.reverse()
+        folderParts = os.path.realpath( folder ).strip( os.sep ).split( os.sep )
+
+        return not any( folderPart != fileParts.pop() for folderPart in folderParts )
+
 
 class RsyncSshSyncSpecificRemoteCommand(RsyncSshSyncBase):
     """Start rsync for a specific remote"""
@@ -252,6 +298,19 @@ class RsyncSshSaveCommand(sublime_plugin.EventListener):
 
         # Execute sync with the name of file being saved
         view.run_command("rsync_ssh_sync", {"path_being_saved": view.file_name()})
+
+class RsyncSshSyncFileCommand(RsyncSshSyncSelection):
+    """Start rsync for a specific remote"""
+
+    def setup( self, **args ): # pylint: disable=W0613
+        currentFile = self.view.file_name()
+        if currentFile is None:
+            return False
+
+        self.files.append( currentFile )
+        self.possibleRemotes = self.matchFile( currentFile )
+
+        return True
 
 
 class RsyncSshSyncCommand(RsyncSshSyncBase):
