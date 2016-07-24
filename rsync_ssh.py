@@ -258,7 +258,7 @@ class RsyncSshSyncCommand(sublime_plugin.TextCommand):
             settings,
             args.get("remote", None),
             args.get("destination", None),
-            args.get("files", [])
+            args.get("files", []),
             args.get("force_sync", False)
         )
         thread.start()
