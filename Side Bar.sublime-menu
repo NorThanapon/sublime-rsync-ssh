@@ -1,0 +1,15 @@
+[
+	{
+		"caption": "-",
+		"id": "side-bar-end-separator"
+	},
+	{
+		"caption": "Rsync selection",
+		"command": "rsync_ssh_side",
+		"args": { "paths": [] }
+	},
+	{
+		"caption": "-",
+		"id": "side-bar-end-separator"
+	}
+]

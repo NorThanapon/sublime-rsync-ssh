@@ -312,6 +312,26 @@ class RsyncSshSyncFileCommand(RsyncSshSyncSelection):
 
         return True
 
+class RsyncSshSideCommand(RsyncSshSyncSelection):
+
+    def setup( self, **args ): # pylint: disable=W0613
+        paths = args.get( 'paths', None )
+        if paths is None or len( paths ) == 0:
+            return False
+
+        self.files.extend( paths )
+
+        possibleRemotes = { path:self.matchFile( path ) for path in paths }
+        iterator = iter( possibleRemotes )
+        first = next( iterator, False )
+        if not first or not all( possibleRemotes[ first ] == possibleRemotes[ rest ] for rest in iterator ):
+            self.view.window().status_message( '### Rsync: Selection requests multiple locations!' )
+            return False
+
+        self.possibleRemotes = possibleRemotes[ first ];
+
+        return True
+
 
 class RsyncSshSyncCommand(RsyncSshSyncBase):
     """Sublime Command for invoking the actual sync process"""
