@@ -169,10 +169,16 @@ class RsyncSshSyncBase(sublime_plugin.TextCommand):
             else:
                 self.hosts = [ [ 'All', 'Sync to all destinations' ] ]
                 for destination in destinations:
-                    self.hosts.append( [
-                        destination.get( 'remote_user' ) + '@' + destination.get( 'remote_host' ) + ':' + str( destination.get( 'remote_port' ) ),
-                        destination.get( 'remote_path' )
-                    ] )
+                    if 'label' in destination or ( hasattr( destination, 'has' ) and callable( getattr( destination, 'has' ) ) ):
+                        self.hosts.append( [
+                            destination.get( 'label' ),
+                            destination.get( 'remote_user' ) + '@' + destination.get( 'remote_host' ) + ':' + str( destination.get( 'remote_port' ) ) + ':' + destination.get( 'remote_path' )
+                        ] )
+                    else:
+                        self.hosts.append( [
+                            destination.get( 'remote_user' ) + '@' + destination.get( 'remote_host' ) + ':' + str( destination.get( 'remote_port' ) ),
+                            destination.get( 'remote_path' )
+                        ] )
 
                 selected_destination = self.view.settings().get( 'rsync_ssh_sync_' + self.identifier + '_destination', 0 )
                 selected_destination = max( selected_destination, 0 )
