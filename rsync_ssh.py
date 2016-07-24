@@ -38,6 +38,7 @@ def check_output(*args, **kwargs):
 
     return subprocess.check_output(*args, universal_newlines=True, startupinfo=startupinfo, **kwargs)
 
+# FIXME: once save gets rewritten/removed take this out.
 def rsync_ssh_settings(view=sublime.active_window().active_view()):
     """Get settings from the sublime project file"""
     project_data = view.window().project_data()
@@ -120,6 +121,7 @@ class RsyncSshInitSettingsCommand(sublime_plugin.TextCommand):
         self.view.window().run_command("open_file", {"file": "${project}"})
 
 class RsyncSshSyncBase(sublime_plugin.TextCommand):
+    """Base command class providing user choices for folders(config) and destination. Also loads settings."""
     files                     = []
     hosts                     = []
     possibleRemotes           = []
@@ -130,6 +132,7 @@ class RsyncSshSyncBase(sublime_plugin.TextCommand):
     ignoreObviousRemoteChoice = False
 
     def run( self, edit, **args ): # pylint: disable=W0613
+        """Initialize and load settings."""
         self.files            = []
         self.hosts            = []
         self.possibleRemotes  = []
@@ -195,6 +198,7 @@ class RsyncSshSyncBase(sublime_plugin.TextCommand):
             )
 
 class RsyncSshSyncSelection(RsyncSshSyncBase):
+    """Base command class for commands requiring matching files to possible destinations"""
 
     def run( self, edit, **args ): # pylint: disable=W0613
         self.identifier = 'file'
@@ -208,7 +212,7 @@ class RsyncSshSyncSelection(RsyncSshSyncBase):
 
         # This method should be overwritten in subclass doing the 
         # matching and filling possible remotes to upload to
-        if not self.setup( **args ):
+        if not self.matchSet( **args ):
             return
 
         if len( self.possibleRemotes ) == 0:
@@ -218,11 +222,18 @@ class RsyncSshSyncSelection(RsyncSshSyncBase):
 
         self.view.window().show_quick_panel( self.possibleRemotes, self.sync_remote, sublime.MONOSPACE_FONT, 0 )
 
-    def setup( self, **args ):
+    def matchSet( self, **args ):
+        """Checks setup and determines if all matches and user shall be prompted for selection."""
         return False
 
     def loadRemotePathMapping( self ):
+        """Map each configured folder to is real filesystem representation"""
         self.realRemotePaths = {}
+        # Algorithm:
+        # 1) Get the folders associated with the project (Note: '/proj/sub' and '/proj' does not exist and collapses to '/proj')
+        # 2) Strip and split both by os.sep; This gives all the single folders on the way
+        # 3) Test if last folder in window folder is equal to first in configured folder (Works because of the note above!)
+        # 4) Dictionary configured folder: folder in filesystem
         windowFoldersArr = [ os.path.realpath( windowFolder ).strip( os.sep ).split( os.sep ) for windowFolder in self.view.window().folders() ]
         for remote in self.settings.get( 'remotes' ).keys():
             remoteArr = re.split( os.sep + '|/', remote.strip( os.sep ) )
@@ -231,9 +242,16 @@ class RsyncSshSyncSelection(RsyncSshSyncBase):
                     self.realRemotePaths[ remote ] = os.sep.join( [ '' ] + windowFolderArr + remoteArr[ 1: ] )
 
     def matchFile( self, file ):
+        """Finds all configured folders containing the file"""
         return [ remote for remote in self.realRemotePaths if self.isInDirectory( self.realRemotePaths[ remote ], file ) ]
     
     def isInDirectory( self, folder, file ):
+        """File in directory/subdirectory check."""
+        # Strangely this can't be done with standard python
+        # It builds something like os.path.commonprefix with correct folder boundaries
+        # 1) Strips and splits both paths via os.sep
+        # 2) Reverses file array to be able to call array.pop() easily
+        # 3) Via generator for folder and array.pop() for file traverse both and disallow any mismatch till folder parts are exhausted
         fileParts = os.path.realpath( file ).strip( os.sep ).split( os.sep )
         fileParts.reverse()
         folderParts = os.path.realpath( folder ).strip( os.sep ).split( os.sep )
@@ -244,7 +262,7 @@ class RsyncSshSyncSelection(RsyncSshSyncBase):
 class RsyncSshSyncSpecificRemoteCommand(RsyncSshSyncBase):
     """Start rsync for a specific remote"""
 
-    def run(self, edit, **args): # pylint: disable=W0613
+    def run( self, edit, **args ): # pylint: disable=W0613
         """Let user select which remote/destination to sync using the quick panel"""
 
         self.identifier = 'specific_remote'
@@ -254,14 +272,14 @@ class RsyncSshSyncSpecificRemoteCommand(RsyncSshSyncBase):
         if self.settings is False:
             return
 
-        for remote_key in self.settings.get("remotes").keys():
-            for destination in self.settings.get("remotes").get(remote_key):
-                if destination.get("enabled", True) == True:
+        for remote_key in self.settings.get( 'remotes' ).keys():
+            for destination in self.settings.get( 'remotes' ).get( remote_key ):
+                if destination.get( 'enabled', True ) == True:
                     if remote_key not in self.possibleRemotes:
-                        self.possibleRemotes.append(remote_key)
+                        self.possibleRemotes.append( remote_key )
 
-        selected_remote = self.view.settings().get("rsync_ssh_sync_" + self.identifier + "_remote", 0)
-        self.view.window().show_quick_panel(self.possibleRemotes, self.sync_remote, sublime.MONOSPACE_FONT, selected_remote)
+        selected_remote = self.view.settings().get( 'rsync_ssh_sync_' + self.identifier + '_remote', 0 )
+        self.view.window().show_quick_panel( self.possibleRemotes, self.sync_remote, sublime.MONOSPACE_FONT, selected_remote )
 
 class RsyncSshSaveCommand(sublime_plugin.EventListener):
     """Sublime Command for syncing a single file when user saves"""
@@ -300,9 +318,10 @@ class RsyncSshSaveCommand(sublime_plugin.EventListener):
         view.run_command("rsync_ssh_sync", {"path_being_saved": view.file_name()})
 
 class RsyncSshSyncFileCommand(RsyncSshSyncSelection):
-    """Start rsync for a specific remote"""
+    """Sublime command for uploading the active file."""
 
-    def setup( self, **args ): # pylint: disable=W0613
+    def matchSet( self, **args ): # pylint: disable=W0613
+        """Checks setup and determines if all matches and user shall be prompted for selection."""
         currentFile = self.view.file_name()
         if currentFile is None:
             return False
@@ -313,8 +332,10 @@ class RsyncSshSyncFileCommand(RsyncSshSyncSelection):
         return True
 
 class RsyncSshSideCommand(RsyncSshSyncSelection):
+    """Sublime command for uploading selection of files/folder from sidebar via context menu."""
 
-    def setup( self, **args ): # pylint: disable=W0613
+    def matchSet( self, **args ): # pylint: disable=W0613
+        """Checks setup and determines if all matches and user shall be prompted for selection."""
         paths = args.get( 'paths', None )
         if paths is None or len( paths ) == 0:
             return False
@@ -336,7 +357,7 @@ class RsyncSshSideCommand(RsyncSshSyncSelection):
 class RsyncSshSyncCommand(RsyncSshSyncBase):
     """Sublime Command for invoking the actual sync process"""
 
-    def run(self, edit, **args): # pylint: disable=W0613
+    def run( self, edit, **args ): # pylint: disable=W0613
         """Start thread with rsync to keep ui responsive"""
 
         super( RsyncSshSyncCommand, self ).run( edit, **args )
@@ -347,10 +368,10 @@ class RsyncSshSyncCommand(RsyncSshSyncBase):
         thread = RsyncSSH(
             self.view,
             self.settings,
-            args.get("remote", None),
-            args.get("destination", None),
-            args.get("files", []),
-            args.get("force_sync", False)
+            args.get( 'remote', None ),
+            args.get( 'destination', None ),
+            args.get( 'files', [] ),
+            args.get( 'force_sync', False )
         )
         thread.start()
 
@@ -380,17 +401,17 @@ class RsyncSSH(threading.Thread):
         # Get the project paths
         self.realRemotePaths = {}
         windowFoldersArr = [ os.path.realpath( windowFolder ).strip( os.sep ).split( os.sep ) for windowFolder in self.view.window().folders() ]
-        for remote in self.settings.get( "remotes" ).keys():
+        for remote in self.settings.get( 'remotes' ).keys():
             remoteArr = re.split( os.sep + '|/', remote.strip( os.sep ) )
             for windowFolderArr in windowFoldersArr:
                 if len( windowFolderArr ) > 0 and len( remoteArr ) > 0 and windowFolderArr[ -1 ] == remoteArr[ 0 ]:
-                    self.realRemotePaths[ remote ] = os.sep.join( [''] + windowFolderArr + remoteArr[1:] )
+                    self.realRemotePaths[ remote ] = os.sep.join( [ '' ] + windowFolderArr + remoteArr[ 1: ] )
 
 
         threading.Thread.__init__(self)
 
     def run(self):
-        """Iterate over remotes and destinations and sync all paths that match the saved path"""
+        """Iterate over remotes and destinations and sync all paths that match"""
 
         # Map destination index to the real data object
         # Irregularities -> None -> Loop over all
@@ -398,7 +419,7 @@ class RsyncSSH(threading.Thread):
             if self.folder is None:
                 self.destination = None
             else:
-                destinations = self.settings.get( "remotes" ).get( self.folder )
+                destinations = self.settings.get( 'remotes' ).get( self.folder )
                 # lower than w/o equal as first destination is 'All'
                 if len( destinations ) < self.destination or self.destination <= 0:
                     self.destination = None
@@ -406,7 +427,7 @@ class RsyncSSH(threading.Thread):
                     self.destination = destinations[ self.destination - 1 ]
 
         if self.folder is None:
-            for folder in self.settings.get( "remotes" ).keys():
+            for folder in self.settings.get( 'remotes' ).keys():
                 self.runFolder( folder )
         else:
             self.runFolder()
@@ -415,54 +436,58 @@ class RsyncSSH(threading.Thread):
         if len( self.threads ) > 0:
             for thread in self.threads:
                 thread.join()
-            status_bar_message = self.view.get_status( "00000_rsync_ssh_status" )
-            self.view.set_status( "00000_rsync_ssh_status", "" )
-            sublime.status_message( status_bar_message + " - done." )
-            console_print( "", "", "done" )
+            status_bar_message = self.view.get_status( '00000_rsync_ssh_status' )
+            self.view.set_status( '00000_rsync_ssh_status', '' )
+            sublime.status_message( status_bar_message + ' - done.' )
+            console_print( '', '', 'done' )
         else:
-            status_bar_message = self.view.get_status( "00000_rsync_ssh_status" )
-            self.view.set_status( "00000_rsync_ssh_status", "" )
-            sublime.status_message( status_bar_message + " - done." )
+            status_bar_message = self.view.get_status( '00000_rsync_ssh_status' )
+            self.view.set_status( '00000_rsync_ssh_status', '' )
+            sublime.status_message( status_bar_message + ' - done.' )
 
         # Unblock sync
-        self.view.set_status( "00000_rsync_ssh_status", "" )
+        self.view.set_status( '00000_rsync_ssh_status', '' )
 
     def runFolder( self, folder = None ):
+        """If specified iterate specified or all destinations for this folder."""
+
         if folder is None:
             folder = self.folder
 
         if self.destination is None:
-            for destination in self.settings.get( "remotes" ).get( folder ):
+            for destination in self.settings.get( 'remotes' ).get( folder ):
                 self.runDestination( folder, destination )
             pass
         else:
             self.runDestination( folder, self.destination )
 
     def runDestination( self, folder, destination ):
+        """Starts sync thread for each file/folder that should be uploaded."""
+
         # Merge settings with defaults
-        global_excludes = [".DS_Store"]
-        global_excludes.extend( self.settings.get( "excludes", [] ) )
+        global_excludes = [ '.DS_Store' ]
+        global_excludes.extend( self.settings.get( 'excludes', [] ) )
 
         global_options = []
-        global_options.extend( self.settings.get( "options", [] ) )
+        global_options.extend( self.settings.get( 'options', [] ) )
 
-        connect_timeout = self.settings.get( "timeout", 10 )
+        connect_timeout = self.settings.get( 'timeout', 10 )
 
         # Get path to local ssh binary
-        ssh_binary = self.settings.get( "ssh_binary", self.settings.get( "ssh_command", "ssh" ) )
+        ssh_binary = self.settings.get( 'ssh_binary', self.settings.get( 'ssh_command', 'ssh' ) )
 
-        destination_string = ":".join( [
-            destination.get( "remote_user" ) + "@" + destination.get( "remote_host" ),
-            str( destination.get( "remote_port", 22 ) ),
-            destination.get( "remote_path" )
+        destination_string = ':'.join( [
+            destination.get( 'remote_user' ) + '@' + destination.get( 'remote_host' ),
+            str( destination.get( 'remote_port', 22 ) ),
+            destination.get( 'remote_path' )
         ] )
 
         # Merge local settings with global defaults
         local_excludes = list( global_excludes )
-        local_excludes.extend( destination.get( "excludes", [] ) )
+        local_excludes.extend( destination.get( 'excludes', [] ) )
 
         local_options = list( global_options )
-        local_options.extend( destination.get( "options", [] ) )
+        local_options.extend( destination.get( 'options', [] ) )
 
         if folder not in self.realRemotePaths:
             console_print( folder, 'is unknown' )
@@ -504,8 +529,8 @@ class RsyncSSH(threading.Thread):
         
 
         # Update status message
-        status_bar_message = "Rsyncing to " + str( len( self.threads ) ) + " destination(s)"
-        self.view.set_status( "00000_rsync_ssh_status", status_bar_message )
+        status_bar_message = 'Rsyncing to ' + str( len( self.threads ) ) + ' destination(s)'
+        self.view.set_status( '00000_rsync_ssh_status', status_bar_message )
 
         for thread in threads:
             thread.start()
