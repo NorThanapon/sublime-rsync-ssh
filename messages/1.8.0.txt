@@ -1,0 +1,13 @@
+Rsync SSH 1.8.0
+---------------
+
+- Complete overhaul of the middleware. It previously used string startsWith to determine file/folder inclusion which is bound to fail and did so spectacularly pushing to multiple unwanted remote destinations.
+- New system remembers user choices to eliminate the need to try to match what and where to match. Instead the user choice is just used, as it is specific.
+- This is especially important to have desination configurations with conflicting options.
+  * One to overwrite
+  * One to update (--update)
+  * Going by folder would trigger both. Therefore going by the specific user choice is the way to go.
+  * Still gets wierd with 'All'. But users with special configurations will be aware of that. And this type of configuration at least is possible. 
+- New system respects the folder structure for all the matching, thus fixing unintended pushes to both '/env' and '/env_test' for '/env'
+- New command to trigger sync for current active tab
+- New command to trigger sync for files and folders selected in sidebar. Done via context menu
