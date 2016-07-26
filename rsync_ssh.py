@@ -267,7 +267,7 @@ class RsyncSshSyncSelection(RsyncSshSyncBase):
         fileParts.reverse()
         folderParts = os.path.realpath( folder ).strip( os.sep ).split( os.sep )
 
-        return not any( folderPart != fileParts.pop() for folderPart in folderParts )
+        return not any( not fileParts or ( folderPart != fileParts.pop() ) for folderPart in folderParts )
 
 
 class RsyncSshSyncSpecificRemoteCommand(RsyncSshSyncBase):
